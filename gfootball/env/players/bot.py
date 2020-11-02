@@ -210,6 +210,7 @@ class Player(player_base.PlayerBase):
 
   def take_action(self, observations):
     assert len(observations) == 1, 'Bot does not support multiple player control'
+    # print(observations)
     self._observation = observations[0]
     self._last_action = self._get_action()
     return self._last_action

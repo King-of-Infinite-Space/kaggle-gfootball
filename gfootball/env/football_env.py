@@ -68,8 +68,7 @@ class FootballEnv(gym.Env):
       else:
         config[config_name] = 0
       try:
-        player_factory = importlib.import_module(
-            'gfootball.env.players.{}'.format(name))
+        player_factory = importlib.import_module('gfootball.env.players.{}'.format(name))
       except ImportError as e:
         logging.error('Failed loading player "%s"', name)
         logging.error(e)
