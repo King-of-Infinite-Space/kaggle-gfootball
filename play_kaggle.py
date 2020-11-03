@@ -15,7 +15,7 @@ env = make("football", debug=True, configuration={"save_video": True, "scenario_
 # print('Right player: reward = %s, status = %s, info = %s' % (output[1]["reward"], output[1]["status"], output[1]["info"]))
 # env.render(mode="human", width=800, height=600)
 builtin_agents = ['builtin_ai', 'do_nothing', 'run_left', 'run_right']
-agents = [agent if agent in builtin_agents else "./{}.py".format(agent) for agent in args.agents]
+agents = [agent if ((agent in builtin_agents) or '.py' in agent) else "./{}.py".format(agent) for agent in args.agents]
 agents += ['builtin_ai']*(2-len(agents))
 print(agents)
 env.run(agents)
