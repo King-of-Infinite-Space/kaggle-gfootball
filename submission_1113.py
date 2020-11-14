@@ -4,24 +4,7 @@ from kaggle_environments.envs.football.helpers import human_readable_agent, stic
 import math
 import random
 import numpy as np
-import logging
 from sympy import Interval
-
-from functools import wraps
-from time import time
-
-def timing(f):
-    @wraps(f)
-    def wrap(*args, **kw):
-        ts = time()
-        result = f(*args, **kw)
-        te = time()
-        print('func:%r took: %2.4f sec' % \
-          (f.__name__, te-ts))
-        return result
-    return wrap
-
-logging.basicConfig(filename='test.log', level=logging.DEBUG)
 
 # dictionary of sticky actions
 sticky_actions = {
@@ -104,7 +87,6 @@ def angleBetween(start, end):
 
 class GameState():
     def __init__(self, obs):
-        # self.startTime = time()
         self._obs = obs
 
         self._position = coor2meter(np.array(obs['left_team']))
@@ -130,7 +112,6 @@ class GameState():
         self._opponents_polar_next = toPolar(self._opponent_position_next, self._player_position)
         
         self._goal_coors = coor2meter(np.array([[1, 0.044],[1, -0.044]]))
-        self._goal_center_angle = toPolar(np.array([52.5,0]), self._player_position)[1]
         self._own_goal_coors = coor2meter(np.array([[-1, -0.044],[-1, 0.044]]))
         self._directions = [Action.Right, Action.TopRight, Action.Top, Action.TopLeft, Action.Left, Action.BottomLeft, Action.Bottom, Action.BottomRight] #from right, couterclockwise
         self._offsideLine = np.sort(self._opponent_position_next[:,0])[-2]
@@ -155,7 +136,6 @@ class GameState():
         return theta
 
     # slow
-    # @timing
     def _openAngle(self, obstacles, target=None,lower=None, upper=None):
         # target is in polar
         # target = None is meant for goal angles
@@ -183,16 +163,13 @@ class GameState():
 
     def _pathClear(self, target, obstacles):
         clear = True
-        a_min = 3
-        if target[0] > 15:
-            a_min += 0.5 * (target[0] - 15)
         for i, pos in enumerate(obstacles):
                 # exclude target and passer
                 if i != self._player_id and pos[0] < target[0]:
                     # only counts if closer to target
                     ha = (180 / np.pi) * 0.5 / pos[0]
-                    ha = np.maximum(ha, a_min) # 1 deg ~ 25 m
-                    if abs(angleBetween(target[1], pos[1])) < ha:
+                    ha = np.maximum(ha, 2) # 1 deg ~ 25 m
+                    if abs(angleBetween(target[1],pos[1])) < ha:
                         clear = False
                         break
         return clear
@@ -217,23 +194,17 @@ class GameState():
 
     def _meetBall(self, predict=False):
         # vector calculation
-        v_oppo = np.array([0,0])
-        # if self._obs['ball_owned_team'] == 1: # opponent has ball
-        #     v_oppo = self._opponent_velocity[self._obs['ball_owned_player']]
-        v_oppo_norm = np.linalg.norm(v_oppo)
-        v_ball = self._ball_velocity.squeeze()
-        v_ball_norm = np.linalg.norm(v_ball)
-        v = v_ball if v_ball_norm > v_oppo_norm else v_oppo
-        ballFuture = self._ball_position + 2*v
-        ballFuturePolar = toPolar(ballFuture, self._player_position)
-        if (not predict) or self._player_position[0] < -28 or self._ball_polar[0] < 6:
-            return self._moveTowards(ballFuturePolar[1])
+        ball2 = self._ball_position + 2*self._ball_velocity
+        ball2Polar = toPolar(ball2, self._player_position)
+        if (not predict) or self._player_position[0] < -25 or self._ball_polar[0] < 5:
+            return self._moveTowards(ball2Polar[1])
         else:
+            v_ball = self._ball_velocity.squeeze()
             v_run = 0.788
             diff = []
-            
+            v_ball_norm = np.linalg.norm(v_ball)
             if v_ball_norm < 0.01:
-                return self._moveTowards(ballFuturePolar[1])
+                return self._moveTowards(ball2Polar[1])
             else:
                 for i in range(8):
                     theta = 45*i
@@ -254,9 +225,9 @@ class GameState():
             # w = (0.1 + (180-abs(angle))/180)/1.1 # linear
             # w = (np.cos(np.deg2rad(angle))+1)/2 # cos
             # shouldn't be symmetric?
-            offset = 0.3
+            offset = 0.4
             w = np.exp(-angle**2/90**2)
-            w[0] = w[0] * 0.5 # keeper
+            # w[0] = w[0] * 0.5 # keeper
             w = (w + offset) / (1 + offset) # max = 1
             return w
         def proximityFunc(dis):
@@ -274,8 +245,6 @@ class GameState():
             dh = 34-abs(pos[1])
             dl = np.maximum(dl, 0.3)
             dh = np.maximum(dh, 0.3)
-            if abs(-52.5-pos[0]) < 2 and abs(pos[1]) < 3.7:
-                return 0.05 # beware of own goal
             return np.minimum(dl, dh)
 
         angles = self._goalAngle(pos)
@@ -320,12 +289,13 @@ class GameState():
             return -1  # offside, ignore it
         else:
             if pathClear:
+                # 50m ~ 1 deg
                 # ground pass
                 # release?
                 if dAngle < 30:
-                    if rho < 20:
+                    if rho < 25:
                         passType = Action.ShortPass
-                    elif rho < 30:
+                    elif rho < 40:
                         passType = Action.LongPass
                     else:
                         passType = Action.HighPass
@@ -352,28 +322,17 @@ class GameState():
         return passType
         # return values:
         # -1 don't pass, 0~7 move to, Short, Long, High
-
-    def _runClear(self, dis=8):
-        clear = True
-        if self._player_position[0] < -10: 
-            dis = 10
-        for oppo in self._opponents_polar_next:
-            if oppo[0] < dis:
-                if abs(angleBetween(oppo[1], self._goal_center_angle)) < 40:
-                    clear = False
-                    break
-        return clear
     
     def _evaluateOptions(self):
-        # if opponents ahead far, run towards goal
-        if self._player_position[0] < 34 and self._runClear():
-            return self._moveTowards(self._goal_center_angle)
+        # if opponents far, run towards goal
+        if np.max(self._opponents_polar[:,0]) < 6:
+            return self._moveTowards(toPolar(np.array([52.5,0]), self._player_position)[1])
         # probe L meter away in D directions
         else:
-            if self._player_position[0] < -36 and abs(self._player_position[1]) < 15:
+            if self._player_position[0] < -45 and abs(self._player_position[1]) < 10:
                 if abs(self._player_heading) < 90:
                     return Action.HighPass 
-            # in own box, clear
+            # in own small box, clear
 
             probeL = 1
             probeD = 8
@@ -388,7 +347,7 @@ class GameState():
             for i in range(probeD):
                  a = np.rad2deg(angles[i])
                  for op in self._opponents_polar_next:
-                    if op[0] < 1.2 and abs(angleBetween(a, op[1])) < 30:
+                    if op[0] < probeL and abs(angleBetween(a, op[1])) < 15:
                         risk[i] += 30
                         moveValues[i] -= 30
                 # don't run into opponent
@@ -410,8 +369,8 @@ class GameState():
                             wl = 25 / pos_polar[0]
                             gainV = wl * gainV
                         if passType == Action.HighPass:
-                            passBack = pos[0] < - 10 or (abs(self._player_heading) > 100 and self._player_position[0] < 20)
-                            close2G = self._player_position[0] > 30 and abs(self._player_position[1]) < 27
+                            passBack = pos[0] < - 20 or (abs(self._player_heading) > 120 and self._player_position[0] < 20)
+                            close2G = self._player_position[0] > 30 and abs(self._player_position[1]) < 21
                             if passBack or close2G:
                                 # don't high pass if backwards or close to oppo goal
                                 wh = -1 
@@ -574,17 +533,13 @@ class GameState():
                 return action
         return Action.ShortPass # useless. just in case
 
-    def _defend(self):
-
-        return self._meetBall()
-
     #######################################
     def takeAction(self):
         if self._obs['ball_owned_team'] == 1:
             # defending
             if abs(self._ball_position[1]) > 34: # throw in
                 return Action.Idle
-            return self._defend()
+            return self._meetBall()
         elif self._obs['ball_owned_team'] == -1:
             # no one has the ball. chase it
             return self._meetBall(predict=True)
@@ -620,43 +575,12 @@ class GameState():
 def game_agent(obs):
     s = GameState(obs)
     action = s.takeAction()
-    if obs['ball_owned_team'] == 0:
-        logging.debug(action)
-        # logging.debug(time()-s.startTime)
-        logging.debug('---------------')
+    # if obs['ball_owned_team'] == 0:
+    #     logging.debug(action)
+    #     logging.debug(time()-s.startTime)
+    #     logging.debug('---------------')
     return action
 
 @human_readable_agent
 def agent(obs):
     return game_agent(obs)
-
-if __name__ == "__main__":
-    from kaggle_environments import make
-
-    '''
-    env = make("football", debug=True, configuration={"save_video": True, "scenario_name": 'academy_run_to_score', "render": True})
-
-    # output = env.run(["./miller.py", "./shev.py"])[-1]
-
-    # print('Left player: reward = %s, status = %s, info = %s' % (output[0]["reward"], output[0]["status"], output[0]["info"]))
-    # print('Right player: reward = %s, status = %s, info = %s' % (output[1]["reward"], output[1]["status"], output[1]["info"]))
-    # env.render(mode="human", width=800, height=600)
-    agents = ['./immobile.py','builtin_ai']
-    env.run(agents)
-    '''
-    scenario = "academy_run_pass_and_shoot_with_keeper"
-
-    env = make(
-        "football", debug=True, configuration={"save_video": True,"scenario_name": scenario})
-    env.reset()
-
-    # This is the observation that is passed to agent function
-    obs_kag_env = env.state[0]['observation']
-
-    for _ in range(100):
-        action = agent(obs_kag_env)
-
-        # Environment step is list of agent actions, ie [[agent_1], [agent_2]], here there is 1 action per agent.
-        other_agent_action = [19]
-        full_obs = env.step([action, other_agent_action])
-        obs_kag_env = full_obs[0]['observation']
