@@ -18,4 +18,8 @@ builtin_agents = ['builtin_ai', 'do_nothing', 'run_left', 'run_right']
 agents = [agent if ((agent in builtin_agents) or '.py' in agent) else "./{}.py".format(agent) for agent in args.agents]
 agents += ['builtin_ai']*(2-len(agents))
 print(agents)
-env.run(agents)
+output = env.run(agents)
+output = output[-1]
+score = output[0]['observation']['players_raw'][0]['score']
+print('Left player: score = %s, status = %s, info = %s' % (score[0], output[0]["status"], output[0]["info"]))
+print('Right player: score = %s, status = %s, info = %s' % (score[1], output[1]["status"], output[1]["info"]))

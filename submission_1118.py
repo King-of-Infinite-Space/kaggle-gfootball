@@ -746,38 +746,3 @@ def game_agent(obs):
 @human_readable_agent
 def agent(obs):
     return game_agent(obs)
-
-if __name__ == "__main__":
-    from kaggle_environments import make
-
-    '''
-    env = make("football", debug=True, configuration={"save_video": True, "scenario_name": 'academy_run_to_score', "render": True})
-
-    # output = env.run(["./miller.py", "./shev.py"])[-1]
-
-    # print('Left player: reward = %s, status = %s, info = %s' % (output[0]["reward"], output[0]["status"], output[0]["info"]))
-    # print('Right player: reward = %s, status = %s, info = %s' % (output[1]["reward"], output[1]["status"], output[1]["info"]))
-    # env.render(mode="human", width=800, height=600)
-    agents = ['./immobile.py','builtin_ai']
-    env.run(agents)
-    '''
-    # scenario = "academy_run_pass_and_shoot_with_keeper"
-    scenario = "11_vs_11_kaggle"
-
-    env = make(
-        "football", debug=True, configuration={"save_video": True,"scenario_name": scenario})
-    env.reset()
-
-    # This is the observation that is passed to agent function
-    obs_kag_env = env.state[0]['observation']
-
-    for _ in range(1000):
-        action = agent(obs_kag_env)
-
-        # Environment step is list of agent actions, ie [[agent_1], [agent_2]], here there is 1 action per agent.
-        other_agent_action = [19]
-        full_obs = env.step([action, other_agent_action])
-        obs_kag_env = full_obs[0]['observation']
-
-    score = obs_kag_env['players_raw'][0]['score']
-    print(score)
