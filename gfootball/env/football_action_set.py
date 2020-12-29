@@ -148,7 +148,8 @@ full_action_set = action_set_v2 + [
 ]
 
 action_set_dict = {
-    "default": action_set_v1,
+    "default": action_set_v2,
+    # "default": action_set_v1,
     "v2": action_set_v2,
     # "full" action set is needed by the play_game script.
     # Don't use it for training models.

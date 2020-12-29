@@ -4,192 +4,153 @@ from kaggle_environments.envs.football.helpers import human_readable_agent, stic
 import math
 import random
 import numpy as np
-import logging
-from sympy import Interval
-
-from functools import wraps
-from time import time
-
-def timing(f):
-    @wraps(f)
-    def wrap(*args, **kw):
-        ts = time()
-        result = f(*args, **kw)
-        te = time()
-        print('func:%r took: %2.4f sec' % \
-          (f.__name__, te-ts))
-        return result
-    return wrap
 
 # logging.basicConfig(filename='test.log', level=logging.DEBUG)
 
-# dictionary of sticky actions
-sticky_actions = {
-    "left": Action.Left,
-    "top_left": Action.TopLeft,
-    "top": Action.Top,
-    "top_right": Action.TopRight,
-    "right": Action.Right,
-    "bottom_right": Action.BottomRight,
-    "bottom": Action.Bottom,
-    "bottom_left": Action.BottomLeft,
-    "sprint": Action.Sprint,
-    "dribble": Action.Dribble
-}
-'''
-    Try to check sticky_actions before you do slide, pass, and shot, epecially the direction part. It is simulating your direction button holding action when you use controller to paly the game.
-    The ball ground level height is around 0.10 - 0.15 and player can pick a high pass at height around 0.5-1.0, while goalkeeper can catch the ball at around 0.5-2.0. Gravity is around 0.098, and drag plays a role during ball flying.
-    The sprint speed is around 0.015 per step ---- 7.875, ~8m/s
-    # another mesurement: run 0.0087, sprint 0.0125
-    When PalyerRole is involved, there will be errors somehow, which is blocking to locate enemy goalkeeper accurately. My assumption here is that the latest PR merged in the helper is not available in the scoring environment. Will try to use it later.
-    The space between boal controller and ball is around 0.012 during sprint which is close to the sprint speed. We may assume this is equal to one-step running length.
-    https://www.kaggle.com/sx2154/gfootball-rules-from-environment-exploration
-'''
-
-'''
-    Bottom left/right corner of the field is located at [-1, 0.42] and [1, 0.42], respectively.
-    Top left/right corner of the field is located at [-1, -0.42] and [1, -0.42], respectively.
-    Left/right goal is located at -1 and 1 X coordinate, respectively. They span between -0.044 and 0.044 in Y coordinates.
-    Speed vectors represent a change in the position of the object within a single step.
-'''
-def coor2meter(coor):
-    if isinstance(coor, list):
-        c = np.array(coor)
-    else:
-        c = coor.copy()
-    if c.ndim == 1:
-        c = c[None,:]
-    c[:,0] = c[:,0] * 52.5
-    c[:,1] = - c[:,1] * 34 / 0.42
-    # upper right corner: [52.5, 34]
-    return c.squeeze()
-
-def toPolar(coors, center):
-    if coors.ndim == 1:
-        coors = coors[None,:]
-    rel = coors - center
-    rho = np.hypot(rel[:,0], rel[:,1])
-    theta = np.arctan2(rel[:,1], rel[:,0])
-    angle = theta * 180 / np.pi
-    out = np.column_stack((rho, angle))
-    if out.shape[0] == 1:
-        out = out.squeeze()
-    return out
-    
-def convertAngle(angle, max=360):
-    # assert np.all(np.abs(angle)<=180)
-    angle = (angle + 360) % 360. # [0, 360)
-    if max == 180:
-        if isinstance(angle, np.ndarray):
-            angle[angle>180] -= 360
-        else:
-            if angle > 180:
-                angle -= 360
-    return angle
-
-def angleInterval(a, b):
-    # from a to b
-    if a > 0 and b < 0:
-        return Interval(a, 180) + Interval(-180, b)
-    else:
-        return Interval(a, b)
-
-def angleBetween(start, end):
-    # a, b are theta in polar coordiate in degrees
-    d = end - start
-    d = convertAngle(d, max=180)
-    return d # (-180,180)
-
-def mergeIntervals(arr): 
-    arr.sort(key = lambda x: x[0])  
-    m = [] 
-    s = -10000
-    max = -100000
-    for i in range(len(arr)): 
-        a = arr[i] 
-        if a[0] > max: 
-            if i != 0: 
-                m.append([s,max]) 
-            max = a[1] 
-            s = a[0] 
-        else: 
-            if a[1] >= max: 
-                max = a[1] 
-    #'max' value gives the last point of  
-    # that particular interval 
-    # 's' gives the starting point of that interval 
-    # 'm' array contains the list of all merged intervals 
-    if max != -100000 and [s, max] not in m: 
-        m.append([s, max])
-    return m
-
-def angleOpen(lower, upper, intervals):
-    a = upper - lower
-    for intv in intervals:
-        if intv[0] < upper and intv[1] > lower:
-            da = np.minimum(intv[1], upper) - np.maximum(intv[0], lower)
-            a -= da
-    return np.maximum(a, 0)
-
-# facing goal: 50 m ~ 8 deg, 40-10, 30-14, 20-21
-
-def inBox(pos, dir=1,extend_x=0, extend_y=0):
-    x_box = 52.5 - 16.5 + extend_x
-    y_box = 20.15 + extend_y
-    if dir:
-        inside = pos[0]>x_box and abs(pos[1])<y_box
-    else:
-        inside = pos[0]<-x_box and abs(pos[1])<y_box
-    return inside
-
-def inSmallBox(pos, dir=1,extend_x=0, extend_y=0):
-    x_box = 52.5 - 5.5 + extend_x
-    y_box = 9.15 + extend_y
-    if dir:
-        inside = pos[0]>x_box and abs(pos[1])<y_box
-    else:
-        inside = pos[0]<-x_box and abs(pos[1])<y_box
-    return inside
-
 class GameState():
+    # dictionary of sticky actions
+    
+    def coor2meter(self, coor):
+        if isinstance(coor, list):
+            c = np.array(coor)
+        else:
+            c = coor.copy()
+        if c.ndim == 1:
+            c = c[None,:]
+        c[:,0] = c[:,0] * 52.5
+        c[:,1] = - c[:,1] * 34 / 0.42
+        # upper right corner: [52.5, 34]
+        return c.squeeze()
+
+    def toPolar(self, coors, center):
+        if coors.ndim == 1:
+            coors = coors[None,:]
+        rel = coors - center
+        rho = np.hypot(rel[:,0], rel[:,1])
+        theta = np.arctan2(rel[:,1], rel[:,0])
+        angle = theta * 180 / np.pi
+        out = np.column_stack((rho, angle))
+        if out.shape[0] == 1:
+            out = out.squeeze()
+        return out
+        
+    def convertAngle(self, angle, max=360):
+        # assert np.all(np.abs(angle)<=180)
+        angle = (angle + 360) % 360. # [0, 360)
+        if max == 180:
+            if isinstance(angle, np.ndarray):
+                angle[angle>180] -= 360
+            else:
+                if angle > 180:
+                    angle -= 360
+        return angle
+
+    def angleBetween(self, start, end):
+        # a, b are theta in polar coordiate in degrees
+        d = end - start
+        d = self.convertAngle(d, max=180)
+        return d # (-180,180)
+
+    def mergeIntervals(self, arr): 
+        arr.sort(key = lambda x: x[0])  
+        m = [] 
+        s = -10000
+        max = -100000
+        for i in range(len(arr)): 
+            a = arr[i] 
+            if a[0] > max: 
+                if i != 0: 
+                    m.append([s,max]) 
+                max = a[1] 
+                s = a[0] 
+            else: 
+                if a[1] >= max: 
+                    max = a[1] 
+        #'max' value gives the last point of  
+        # that particular interval 
+        # 's' gives the starting point of that interval 
+        # 'm' array contains the list of all merged intervals 
+        if max != -100000 and [s, max] not in m: 
+            m.append([s, max])
+        return m
+
+    def angleOpen(self, lower, upper, intervals):
+        a = upper - lower
+        for intv in intervals:
+            if intv[0] < upper and intv[1] > lower:
+                da = np.minimum(intv[1], upper) - np.maximum(intv[0], lower)
+                a -= da
+        return np.maximum(a, 0)
+
+    # facing goal: 50 m ~ 8 deg, 40-10, 30-14, 20-21
+
+    def inBox(self, pos, dir=1,extend_x=0, extend_y=0):
+        x_box = 52.5 - 16.5 + extend_x
+        y_box = 20.15 + extend_y
+        if dir:
+            inside = pos[0]>x_box and abs(pos[1])<y_box
+        else:
+            inside = pos[0]<-x_box and abs(pos[1])<y_box
+        return inside
+
+    def inSmallBox(self, pos, dir=1,extend_x=0, extend_y=0):
+        x_box = 52.5 - 5.5 + extend_x
+        y_box = 9.15 + extend_y
+        if dir:
+            inside = pos[0]>x_box and abs(pos[1])<y_box
+        else:
+            inside = pos[0]<-x_box and abs(pos[1])<y_box
+        return inside
+
     def __init__(self, obs):
         # self.startTime = time()
         
         self._obs = obs
         self._npred = 1 # timesteps to predict for position_next
-        self._position = coor2meter(np.array(obs['left_team']))
-        self._velocity = coor2meter(np.array(obs['left_team_direction']))
+        self._position = self.coor2meter(np.array(obs['left_team']))
+        self._velocity = self.coor2meter(np.array(obs['left_team_direction']))
         self._position_next = self._position + self._velocity * self._npred
         self._player_id = obs['active']
         self._player_position = self._position[self._player_id,:]
         self._player_velocity = self._velocity[self._player_id,:]
         self._player_heading = np.rad2deg(np.arctan2(self._player_velocity[1], self._player_velocity[0]))
         
-        self._opponent_position = coor2meter(np.array(obs['right_team']))
-        self._opponent_velocity = coor2meter(np.array(obs['right_team_direction']))
+        self._opponent_position = self.coor2meter(np.array(obs['right_team']))
+        self._opponent_velocity = self.coor2meter(np.array(obs['right_team_direction']))
         self._opponent_position_next = self._opponent_position + self._opponent_velocity * self._npred
     
-        self._ball_position = coor2meter(obs['ball'][:2])
+        self._ball_position = self.coor2meter(obs['ball'][:2])
         # only x, y components
-        self._ball_velocity = coor2meter(obs['ball_direction'][:2])
+        self._ball_velocity = self.coor2meter(obs['ball_direction'][:2])
         self._ball_speed = np.linalg.norm(self._ball_velocity)
-        self._position_polar = toPolar(self._position, self._player_position) 
-        self._opponents_polar = toPolar(self._opponent_position, self._player_position)
-        self._ball_polar = toPolar(self._ball_position, self._player_position)
-        self._position_polar_next = toPolar(self._position_next, self._player_position) 
-        self._opponents_polar_next = toPolar(self._opponent_position_next, self._player_position)
+        self._position_polar = self.toPolar(self._position, self._player_position) 
+        self._opponents_polar = self.toPolar(self._opponent_position, self._player_position)
+        self._ball_polar = self.toPolar(self._ball_position, self._player_position)
+        self._position_polar_next = self.toPolar(self._position_next, self._player_position) 
+        self._opponents_polar_next = self.toPolar(self._opponent_position_next, self._player_position)
         
-        self._goal_coors = coor2meter(np.array([[1, 0.044],[1, -0.044]]))
-        self._goal_center_angle = toPolar(np.array([52.5,0]), self._player_position)[1]
-        self._own_goal_coors = coor2meter(np.array([[-1, -0.044],[-1, 0.044]]))
+        self._goal_coors = self.coor2meter(np.array([[1, 0.044],[1, -0.044]]))
+        self._goal_center_angle = self.toPolar(np.array([52.5,0]), self._player_position)[1]
+        self._own_goal_coors = self.coor2meter(np.array([[-1, -0.044],[-1, 0.044]]))
         self._directions = [Action.Right, Action.TopRight, Action.Top, Action.TopLeft, Action.Left, Action.BottomLeft, Action.Bottom, Action.BottomRight] #from right, couterclockwise
-        self._offsideLine = np.sort(self._opponent_position[:,0])[-2] - 0.3
-   
+        self._offsideLine = np.sort(self._opponent_position[:,0])[-2] - 0.4
+        self.sticky_actions = {
+            "left": Action.Left,
+            "top_left": Action.TopLeft,
+            "top": Action.Top,
+            "top_right": Action.TopRight,
+            "right": Action.Right,
+            "bottom_right": Action.BottomRight,
+            "bottom": Action.Bottom,
+            "bottom_left": Action.BottomLeft,
+            "sprint": Action.Sprint,
+            "dribble": Action.Dribble
+            }
     def _get_active_sticky_action(self, exceptions=[]):
         """ get release action of the first active sticky action, except those in exceptions list """
         release_action = None
-        for k in sticky_actions:
-            if k not in exceptions and sticky_actions[k] in self._obs["sticky_actions"]:
+        for k in self.sticky_actions:
+            if k not in exceptions and self.sticky_actions[k] in self._obs["sticky_actions"]:
                 if k == "sprint":
                     release_action = Action.ReleaseSprint
                 elif k == "dribble":
@@ -200,7 +161,7 @@ class GameState():
         return release_action
 
     def _goalAngle(self, center):
-        theta = toPolar(self._goal_coors, center)[:,1]
+        theta = self.toPolar(self._goal_coors, center)[:,1]
         # [lower post, upper post]
         return theta
 
@@ -223,22 +184,22 @@ class GameState():
                     ha = np.maximum(ha, 2)
                     # blow up if too close
                     intervals.append([pos[1]-ha, pos[1]+ha])
-        intervals = mergeIntervals(intervals)
-        openAngle = angleOpen(lower, upper, intervals)
+        intervals = self.mergeIntervals(intervals)
+        openAngle = self.angleOpen(lower, upper, intervals)
         return openAngle
 
     def _pathClear(self, target, obstacles):
         clear = True
         a_min = 6
         if target[0] > 10:
-            a_min += 0.6 * (target[0] - 10)**1.1
+            a_min += 0.6 * (target[0] - 10)**1.2
         for i, pos in enumerate(obstacles):
                 # exclude target and passer
                 if i != self._player_id and pos[0] < target[0]:
                     # only counts if closer to target
                     ha = (180 / np.pi) * 0.5 / pos[0]
                     ha = np.maximum(ha, a_min) # 1 deg ~ 25 m
-                    if abs(angleBetween(target[1], pos[1])) < ha:
+                    if abs( self.angleBetween(target[1], pos[1])) < ha:
                         clear = False
                         break
         return clear
@@ -270,7 +231,7 @@ class GameState():
         # v_ball_norm = np.linalg.norm(v_ball)
         v = self._ball_velocity #if v_ball_norm > v_oppo_norm else v_oppo
         ballFuture = self._ball_position + n_pred * v # n_pred steps ahead
-        ballFuturePolar = toPolar(ballFuture, self._player_position)
+        ballFuturePolar = self.toPolar(ballFuture, self._player_position)
         return self._moveTowards(ballFuturePolar[1])
     
     def _meetBallThere(self):
@@ -289,7 +250,7 @@ class GameState():
     
     def _goToMidpoint(self):
         mid = 0.5 * (self._ball_position + np.array([-52.5, 0]))
-        _rho, theta = toPolar(mid, self._player_position)
+        _rho, theta = self.toPolar(mid, self._player_position)
         return self._moveTowards(theta)
 
     def _evaluatePosition(self, pos):
@@ -305,12 +266,11 @@ class GameState():
             # shouldn't be symmetric?
             offset = 0.3
             w = np.exp(-rel_angle**2/90**2)
-            w[0] = w[0] * 0.5 # keeper
             w = (w + offset) / (1 + offset) # max = 1
-
+            w[0] = w[0] * 0.5 # keeper
             dis = np.maximum(dis, 0.2)
             inv = 1 / dis
-            w[dis < 1] = 1
+            # w[dis < 1] = 1
             r = inv * w
             return r
 
@@ -329,14 +289,14 @@ class GameState():
             return np.minimum(dl, dh)
 
         angles = self._goalAngle(pos)
-        goal_angle = angleBetween(angles[0],angles[1])
-        og_angles = toPolar(self._own_goal_coors, pos)[:,1]
-        own_goal_angle = angleBetween(og_angles[0], og_angles[1])
+        goal_angle =  self.angleBetween(angles[0],angles[1])
+        og_angles = self.toPolar(self._own_goal_coors, pos)[:,1]
+        own_goal_angle =  self.angleBetween(og_angles[0], og_angles[1])
         theta_mid = np.mean(angles)
-        opponents = toPolar(self._opponent_position_next, pos)
+        opponents = self.toPolar(self._opponent_position_next, pos)
         # this value won't get too high
 
-        rel_angle = angleBetween(theta_mid, opponents[:,1])
+        rel_angle =  self.angleBetween(theta_mid, opponents[:,1])
         risk = riskFunc(opponents[:,0], rel_angle)
         # only consider top 3 risks
         wProx = wProxFunc(pos)
@@ -344,59 +304,61 @@ class GameState():
         # cumulated proximity
 
         advance = goal_angle - own_goal_angle
-        value = advance - cProximity
-        # print(round(goal_angle,1), round(risk,1), round(value,1))
+
         dEdge = dis2Edge(pos)
 
-        value -= 30*(1/dEdge)*(dEdge < 6)
-        # don't go out of play
+        cProximity += 30*(1/dEdge)*(dEdge < 6) # don't go out of play
+
+        value = advance - cProximity
+        # print(round(goal_angle,1), round(risk,1), round(value,1))       
         return value, cProximity
 
-    def _checkPass(self, target, target_polar):
+    def _checkPass(self, target, target_polar, gainV):
         # target in x,y
         # centered at ball-carrying player
         rho = target_polar[0]
         theta = target_polar[1]
         targetDirection = self._angle2direction(theta)
-        dAngle = abs(angleBetween(self._player_heading, theta))
+        dAngle = abs( self.angleBetween(self._player_heading, theta))
         # pAngle = (180 / np.pi) / rho # 1 m control radius
         obstacles = np.vstack((self._position_polar_next, self._opponents_polar_next))
         pathClear = self._pathClear(target_polar, obstacles)
         
         passType = -1 
-        if target[0] > self._offsideLine:
+        if target[0] > self._offsideLine or (rho > 22 and abs(self._player_heading)>100) or rho < 4:
             return -1  # offside, ignore it
         else:
             if pathClear:
                 # ground pass
                 # release?
-                if dAngle < 30:
-                    if rho < 22:
-                        passType = Action.ShortPass
-                    elif rho < 33:
-                        passType = Action.LongPass
-                    else:
-                        passType = Action.HighPass
+                if rho < 25 and dAngle < 30:
+                    passType = Action.ShortPass
+                elif 25 < rho < 33 and dAngle < 20:
+                    passType = Action.LongPass
+                elif rho > 30 and dAngle < 30:
+                    passType = Action.HighPass
                 else:
                     return targetDirection
             else: # no angle
-                if dAngle < 30:
+                if dAngle < 30 and rho > 25:
                     goLong = True
                     for tm in self._position_polar:
-                        if tm[0] < 10 and abs(angleBetween(tm[1],self._player_heading)) < 15:
+                        if tm[0] < 15 and abs( self.angleBetween(tm[1],self._player_heading)) < 15:
                             # ambiguous teammate options
                             goLong = False
                             break
                     if goLong:
                         for op in self._opponents_polar:
-                            if op[0] < 8 and abs(angleBetween(theta, op[1])) < np.rad2deg(0.3 / op[0]):
+                            if op[0] < 8 and abs( self.angleBetween(theta, op[1])) < np.rad2deg(0.3 / op[0]):
                                 # may be blocked by opponent
                                 goLong = False
                                 break
                     if goLong:
                         passType = Action.HighPass
                     else:
-                        return targetDirection
+                        if gainV > 2:
+                            return targetDirection
+                        return -1
         return passType
         # return values:
         # -1 don't pass, 0~7 move to, Short, Long, High
@@ -407,7 +369,7 @@ class GameState():
             dis += 4
         for oppo in self._opponents_polar_next:
             if oppo[0] < dis:
-                if abs(angleBetween(oppo[1], self._goal_center_angle)) < 40:
+                if abs( self.angleBetween(oppo[1], self._goal_center_angle)) < 40:
                     clear = False
                     break
         return clear
@@ -437,15 +399,14 @@ class GameState():
 
         moveValues = valueRisk[:,0] # advance - proximity
         risk = valueRisk[:,1]
-
+        diffi = np.zeros((probeD,))
         for i in range(probeD):
-                a = np.rad2deg(angles[i])
-                for op in self._opponents_polar:
-                    if op[0] < 1.2 and abs(angleBetween(a, op[1])) < 30:
-                        risk[i] += 30
-                        moveValues[i] -= 30
+            for op in self._opponents_polar_next:
+                if op[0] < 1.5:
+                    cos = np.cos((angles[i]-np.deg2rad(op[1]))/2)
+                    diffi[i] = 30 * cos
         # don't run into opponent
-        return moveOptions, moveValues, risk
+        return moveOptions, moveValues, risk, diffi
 
     def _passOptions(self, mVmax):
         passOptions = []
@@ -454,12 +415,13 @@ class GameState():
         for i, pos in enumerate(self._position_next):
             if i != self._player_id:
                 pV, _pRisk = self._evaluatePosition(pos)
-                if pV > mVmax:
-                    pos_polar = toPolar(pos, self._player_position)
-                    passType = self._checkPass(pos, pos_polar)
+                gainV = pV - mVmax
+                if gainV > 1:
+                    pos_polar = self.toPolar(pos, self._player_position)
+                    passType = self._checkPass(pos, pos_polar, gainV)
 
                     gainV = pV - mVmax
-                    gainV = gainV * np.exp(-pos_polar[0]/20)
+                    gainV = gainV * np.exp(-pos_polar[0]/30)
                     
                     if passType in [Action.HighPass, Action.LongPass]:
                         passBack = pos[0] - self._player_position[0] < - 20 or abs(self._player_heading) > 100
@@ -494,15 +456,15 @@ class GameState():
 
         currentValue, currentRisk = self._evaluatePosition(self._player_position)                          
 
-        moveOptions, moveValues, risk = self._moveOptions() 
+        moveOptions, moveValues, risk, diffi = self._moveOptions() 
 
-        if self._player_position[0] < -30 and (currentRisk > 25 or inBox(self._player_position,dir=-1, extend_x=2)):
-            return self._clearance(moveValues)
+        if self._player_position[0] < -30 and (currentRisk > 25 or self.inSmallBox(self._player_position,dir=-1, extend_x=2)):
+            return self._clearance(moveValues-diffi)
 
         mVmax = np.max(moveValues)
 
         passOptions, passValues, gainValues = self._passOptions(mVmax)
-        totalMoveValues = moveValues - mVmax + gainValues
+        totalMoveValues = moveValues - mVmax + gainValues - diffi
         # good moves are positive
         if passOptions == [] or np.max(passValues) <= 0:
             # totalMoveValues[risk > 40] -= 100 # ignore risky ones
@@ -523,7 +485,7 @@ class GameState():
             openAngle = self._openAngle(obstacles, lower=lower, upper=upper)
             gkAngle = self._opponents_polar_next[0,1]
             gkDis = self._opponents_polar_next[0,0]
-            dAngle = abs(angleBetween(mid, self._player_heading))
+            dAngle = abs( self.angleBetween(mid, self._player_heading))
 
             keeperOut = gkDis < 20 and np.linalg.norm(self._opponent_position_next[0,:]-np.array([52.5, 0])) > 5
             
@@ -533,7 +495,7 @@ class GameState():
                 else:
                     if Action.Sprint in self._obs["sticky_actions"]:
                         return Action.ReleaseSprint
-                    if abs(angleBetween(self._player_heading, gkAngle)) < 5 and keeperOut:
+                    if abs( self.angleBetween(self._player_heading, gkAngle)) < 5 and keeperOut:
                         d = round(gkAngle / 45)
                         sign = ((gkAngle > 0)-0.5)*2
                         a = d * 45 + sign * 45
@@ -556,14 +518,14 @@ class GameState():
                 if i != self._player_id:
                     gainV, _pRisk = self._evaluatePosition(pos)
                         # weigh pass and dribble
-                    pos_polar = toPolar(pos, self._player_position)
-                    passType = self._checkPass(pos, pos_polar)
+                    pos_polar = self.toPolar(pos, self._player_position)
+                    passType = self._checkPass(pos, pos_polar, gainV)
                     if passType == Action.LongPass:
                         # 25 ~ 40 m
                         wl = 25 / pos_polar[0]
                         gainV = wl * gainV
                     if passType == Action.HighPass:
-                        if pos[0] < - 20 or (abs(self._player_heading) > 120 and self._player_position[0] < 20):
+                        if pos[0] < - 20 or (abs(self._player_heading) > 120):
                             wh = -1 # don't high pass back
                         else:
                             wh = 1 - 0.6 * self._player_position[0] / 52.5
@@ -582,7 +544,7 @@ class GameState():
                     else:
                         return Action.ShortPass
     def _penalty(self):
-        # if self._obs['game_mode'] == GameMode.Penalty:
+        if self._obs['game_mode'] == GameMode.Penalty:
         #     action_to_release = self._get_active_sticky_action(["top_right", "bottom_right"])
         #     if action_to_release is not None:
         #         return action_to_release
@@ -593,17 +555,17 @@ class GameState():
         #         else:
         #             return Action.BottomRight
         #     return Action.Shot
-        if (random.random() < 0.5 and
-                Action.TopRight not in self._obs["sticky_actions"] and
-                Action.BottomRight not in self._obs["sticky_actions"]):
-            return Action.TopRight
-        else:
-            if Action.BottomRight not in self._obs["sticky_actions"]:
-                return Action.BottomRight
-        return Action.Shot
+            if (random.random() < 0.5 and
+                    Action.TopRight not in self._obs["sticky_actions"] and
+                    Action.BottomRight not in self._obs["sticky_actions"]):
+                return Action.TopRight
+            else:
+                if Action.BottomRight not in self._obs["sticky_actions"]:
+                    return Action.BottomRight
+            return Action.Shot
 
     def _corner(self):
-        # if self._obs['game_mode'] == GameMode.Corner:
+        if self._obs['game_mode'] == GameMode.Corner:
         #     action_to_release = self._get_active_sticky_action(["top", "bottom"])
         #     if action_to_release != None:
         #         return action_to_release
@@ -613,13 +575,22 @@ class GameState():
         #         else:
         #             return Action.Bottom
         #     return Action.HighPass
-        if self._player_position[1] < 0:
-            if Action.TopRight not in self._obs["sticky_actions"]:
-                return Action.TopRight
-        else:
-            if Action.BottomRight not in self._obs["sticky_actions"]:
-                return Action.BottomRight
-        return Action.Shot
+            '''
+            if self._player_position[1] < 0:
+                if Action.TopRight not in self._obs["sticky_actions"]:
+                    return Action.TopRight
+            else:
+                if Action.BottomRight not in self._obs["sticky_actions"]:
+                    return Action.BottomRight
+            return Action.Shot
+            '''
+            if self._player_position[1] < 0:
+                if Action.Top not in self._obs["sticky_actions"]:
+                    return Action.Top
+            else:
+                if Action.Bottom not in self._obs["sticky_actions"]:
+                    return Action.Bottom
+            return Action.HighPass
     
         
     def _free_kick(self):
@@ -663,8 +634,8 @@ class GameState():
             return Action.ShortPass
     
     def _takeSetPiece(self):
-        for sp in [self._throw_in, self._penalty, self._corner, self._free_kick, self._goal_kick, self._kick_off]:
-            action = sp()
+        for action in [self._throw_in(), self._penalty(), self._corner(), self._free_kick(), self._goal_kick(), self._kick_off()]:
+            # action = sp()
             if action is not None:
                 return action
         return Action.HighPass # useless. just in case
@@ -672,8 +643,8 @@ class GameState():
     def _slide(self):
         op_v = self._opponent_velocity[self._obs['ball_owned_player'], :]
         op_rel = self._opponent_position[self._obs['ball_owned_player'], :] - self._player_position
-        lastD = np.sum(self._position[:,0] < self._player_position[0]) <= 3 # n-th last def
-        nearOp = self._opponents_polar[self._obs['ball_owned_player'],0] < 0.75
+        lastD = np.sum(self._position[:,0] < self._player_position[0]) <= 5 # n-th last def
+        nearOp = self._opponents_polar_next[self._obs['ball_owned_player'],0] < 0.75
         towardsMe = op_v.dot(op_rel) < 0
         rightPlace = self._player_position[0] > -52.5+18
         noYellow = self._obs['left_team_yellow_card'][self._player_id] == 0
@@ -682,11 +653,13 @@ class GameState():
 
     def _defend(self):
         op = self._opponent_position_next[self._obs['ball_owned_player']]
-        if self._obs['ball_owned_player'] == 0:
-            return self._goToMidpoint()
-        # if self._ball_polar[0] < 2:
-        #     return self._meetBall(n_pred=4)
-        if (self._ball_polar[0] < 7 or inBox(op, dir=-1, extend_x=3)) and not self._player_position[0] - op[0] > 1.5:
+        # if self._obs['ball_owned_player'] == 0:
+        #     return self._goToMidpoint()
+        if self._ball_speed < 0.01:
+            return self._meetBall()
+        if self._ball_polar[0] < 2 and abs(self._ball_polar[1]) < 70 and self.inBox(self._player_position, dir=-1):
+            return self._meetBall(n_pred=4)
+        if (self._ball_polar[0] < 7 or self.inBox(op, dir=-1, extend_x=3)) and not self._player_position[0] - op[0] > 1.5:
             slide = self._slide()
             if slide is not None:
                 return slide
@@ -702,24 +675,24 @@ class GameState():
             if abs(self._ball_position[1]) > 34: # throw in
                 return Action.Idle
             return self._defend()
-        elif self._obs['ball_owned_team'] == -1:
+        if self._obs['ball_owned_team'] == -1:
             # no one has the ball. chase it
-            return self._meetBallThere()
-        else:
-            # in possession
-            if self._obs['game_mode'] != GameMode.Normal:
-                return self._takeSetPiece()
+            # return self._meetBallThere()
+            return self._meetBall(n_pred=6)
+        # in possession
+        if self._obs['game_mode'] != GameMode.Normal:
+            return self._takeSetPiece()
             # charge!!!
-            elif self._obs["ball_owned_player"] == self._obs["active"]:
-                for kick in [self._shoot, self._evaluateOptions]:
-                    action = kick()
-                    # logging.debug(time()-self.startTime)
-                    # print(action)
-                    if action is not None:
-                        return action 
-                return Action.Shot # just in case
-            else:
-                return Action.Shot
+        elif self._obs["ball_owned_player"] == self._obs["active"]:
+            for kick in [self._shoot, self._evaluateOptions]:
+                action = kick()
+                # logging.debug(time()-self.startTime)
+                # print(action)
+                if action is not None:
+                    return action 
+            return Action.Shot # just in case
+        else:
+            return Action.Shot
 
 # "%%writefile -a submission.py" will append the code below to submission.py,
 
@@ -734,7 +707,9 @@ class GameState():
 #    when a single player is controlled on the team.
 # - 'left_team_roles'/'right_team_roles' are turned into PlayerRole enums.
 # - Action enum is to be returned by the agent function.
-def game_agent(obs):
+
+@human_readable_agent
+def agent(obs):
     s = GameState(obs)
     action = s.takeAction()
     # if obs['ball_owned_team'] == 0:
@@ -742,42 +717,3 @@ def game_agent(obs):
     #     # logging.debug(time()-s.startTime)
     #     logging.debug('---------------')
     return action
-
-@human_readable_agent
-def agent(obs):
-    return game_agent(obs)
-
-if __name__ == "__main__":
-    from kaggle_environments import make
-
-    '''
-    env = make("football", debug=True, configuration={"save_video": True, "scenario_name": 'academy_run_to_score', "render": True})
-
-    # output = env.run(["./miller.py", "./shev.py"])[-1]
-
-    # print('Left player: reward = %s, status = %s, info = %s' % (output[0]["reward"], output[0]["status"], output[0]["info"]))
-    # print('Right player: reward = %s, status = %s, info = %s' % (output[1]["reward"], output[1]["status"], output[1]["info"]))
-    # env.render(mode="human", width=800, height=600)
-    agents = ['./immobile.py','builtin_ai']
-    env.run(agents)
-    '''
-    # scenario = "academy_run_pass_and_shoot_with_keeper"
-    scenario = "11_vs_11_kaggle"
-
-    env = make(
-        "football", debug=True, configuration={"save_video": True,"scenario_name": scenario})
-    env.reset()
-
-    # This is the observation that is passed to agent function
-    obs_kag_env = env.state[0]['observation']
-
-    for _ in range(1000):
-        action = agent(obs_kag_env)
-
-        # Environment step is list of agent actions, ie [[agent_1], [agent_2]], here there is 1 action per agent.
-        other_agent_action = [19]
-        full_obs = env.step([action, other_agent_action])
-        obs_kag_env = full_obs[0]['observation']
-
-    score = obs_kag_env['players_raw'][0]['score']
-    print(score)

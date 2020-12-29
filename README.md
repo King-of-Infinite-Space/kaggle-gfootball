@@ -1,4 +1,36 @@
-# Google Research Football
+Attempted  Kaggle competition *Google Research Football with Manchester City F.C.* The goal is to develop an agent in a football game (similar to FIFA/PES but much more crude). The controlled player chooses an action based on observation. 
+
+I don't know why MCFC is interested in reinfocement learning for football game -- without a very realistic physics engine it is just a video game and will not be relevant to actual football.
+
+This project was cloned from Google Research Football repo and works in Ubuntu 18.04. Original readme attached below. 
+
+My agent is rule-based. When in possession, it tries to maximize a "value function" by running/passing towards goal. However, since everything was hand-written, it quickly became too complicated to tune, and wasn't able to exploit the environment. It performs much worse than some simpler rule-based bots. As shown in an example below, combining this approach with ML can lead to much better results.
+
+#### Other participants' agents
+- [Yegor Biryukov](https://www.kaggle.com/yegorbiryukov/gfootball-with-memory-patterns) -- a public rule based agent, simple but effective
+- [HuiUnited](https://www.kaggle.com/huiunited/hui-gfootball-with-memory-patterns-from-yegor) -- impressive 31st place for a rule based agent, based on previous one
+- [LiamKirwin](https://www.kaggle.com/c/google-football/discussion/201202) -- 22nd place, hybrid approach. Started with rules using heuristic value functions, then the value function was replaced by a learned model.
+- Unsurprisingly, the top teams used a variety of RL approaches. ML by imitating top teams also worked quite well.
+
+#### Examples
+
+- Run game in Kaggle environment
+  ```
+  python3 play_kaggle.py left_agent right_agent
+  ```
+- Run game step by step (for debugging purpose, no rendering)
+  ```
+  python3 test_kaggle.py left_agent right_agent
+  ```
+- Run game in Google Football environment (I couldn't make the Kaggle agents work in this environment. Manual control is not handy at all, perhaps partly due to low FPS.)
+  ```
+  python3 -m gfootball.play_game --players "gamepad:left_players=1;builtin_ai:right_players=1" --action_set=full --level='11_vs_11_kaggle'
+  ```
+  
+
+---
+
+## Google Research Football
 
 This repository contains an RL environment based on open-source game Gameplay
 Football. <br> It was created by the Google Brain team for research purposes.
